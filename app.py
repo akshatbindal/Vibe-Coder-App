@@ -470,7 +470,7 @@ def start_preview(python_filename):
 
 # --- Streamlit App UI ---
 
-st.title("🤖 AI Streamlit App Generator")
+st.title("🤖 AI Tool that generates another AI Tool")
 
 # --- Sidebar ---
 with st.sidebar:
