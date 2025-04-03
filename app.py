@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import json
 import time
-from dotenv import load_dotenv
 import subprocess # Needed to run other Streamlit apps (the preview)
 import socket    # Needed to find an open network port for the preview
 import sys       # Needed to get the path to the current Python executable
@@ -18,9 +17,8 @@ import streamlit_antd_components as sac # Using for specific buttons (Save/Delet
 # --- Configuration ---
 st.set_page_config(
     layout="wide",
-    page_title="AI App Gen" # Shorter title
+    page_title="AI Tool that generates another AI Tool" # Shorter title
 )
-load_dotenv() # Load API keys from a file named .env in the same directory
 
 # --- Constants ---
 # Where generated Python app files will be saved
@@ -62,7 +60,7 @@ Ensure your entire response is *only* the JSON array `[...]`.
 
 # --- API Client Setup ---
 try:
-    google_api_key = os.getenv("GOOGLE_API_KEY")
+    google_api_key = st.secrets["my_secrets"]["gemini_api_key"]
     if not google_api_key:
         # Stop the app if the API key is missing
         st.error("🔴 Google API Key not found. Please set `GOOGLE_API_KEY` in a `.env` file.")
