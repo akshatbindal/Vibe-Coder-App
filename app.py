@@ -4,9 +4,7 @@ import os
 from pathlib import Path
 import json
 import time
-import subprocess # Needed to run other Streamlit apps (the preview)
-import socket    # Needed to find an open network port for the preview
-import sys       # Needed to get the path to the current Python executable
+import shutil  # For copying files
 
 # --- UI Components ---
 # These libraries provide pre-built UI elements like menus and the code editor.
@@ -24,6 +22,8 @@ st.set_page_config(
 # Where generated Python app files will be saved
 WORKSPACE_DIR = Path("workspace_st_apps")
 WORKSPACE_DIR.mkdir(exist_ok=True) # Create the directory if it doesn't exist
+PAGES_DIR = Path(".streamlit/pages")  # Streamlit's standard pages directory
+PAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Code editor appearance settings
 ACE_DEFAULT_THEME = "monokai"
@@ -160,6 +160,11 @@ def delete_file(filename):
     try:
         if filepath.is_file():
             os.remove(filepath) # Delete the actual file
+            # Also remove any preview of this file
+            preview_path = PAGES_DIR / f"_preview_{filename}"
+            if preview_path.exists():
+                preview_path.unlink()
+            
             st.toast(f"Deleted: {filename}", icon="🗑️")
 
             # If the deleted file was being previewed, stop the preview
@@ -348,125 +353,62 @@ def ask_gemini_ai(chat_history):
         return json.dumps([{"action": "chat", "content": error_content}])
 
 # --- Live Preview Process Management ---
-def _find_available_port():
-    """Finds an unused network port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0)) # Bind to port 0 to let the OS choose a free port
-        return s.getsockname()[1] # Return the chosen port number
-
 def stop_preview():
-    """Stops the currently running Streamlit preview process."""
-    process_to_stop = st.session_state.get("preview_process")
-    pid = getattr(process_to_stop, 'pid', None) # Get process ID if available
-
-    if process_to_stop and pid:
-        st.info(f"Stopping preview process (PID: {pid})...")
+    """Stops the preview by removing the file from pages directory."""
+    preview_file = st.session_state.get("preview_file")
+    if preview_file:
         try:
-            # Check if the process is still running
-            if process_to_stop.poll() is None:
-                # Ask the process to terminate gracefully
-                process_to_stop.terminate()
-                try:
-                    # Wait up to 3 seconds for it to close
-                    process_to_stop.wait(timeout=3)
-                    st.toast(f"Preview process {pid} stopped.", icon="⏹️")
-                except subprocess.TimeoutExpired:
-                    # If it didn't stop, force kill it
-                    st.warning(f"Preview process {pid} did not stop gracefully, killing...")
-                    if process_to_stop.poll() is None: # Check again before kill
-                        process_to_stop.kill()
-                        process_to_stop.wait(timeout=1) # Brief wait for kill
-                        st.toast(f"Preview process {pid} killed.", icon="💀")
-            else:
-                # Process was already finished
-                st.warning(f"Preview process {pid} had already stopped.")
-        except ProcessLookupError:
-            st.warning(f"Preview process {pid} not found (already gone?).")
+            preview_path = PAGES_DIR / f"_preview_{preview_file}"
+            if preview_path.exists():
+                preview_path.unlink()
+                st.toast(f"Preview stopped for {preview_file}", icon="⏹️")
         except Exception as e:
-            st.error(f"Error trying to stop preview process {pid}: {e}")
-
-    # Always clear the preview state variables after attempting to stop
-    st.session_state.preview_process = None
-    st.session_state.preview_port = None
-    st.session_state.preview_url = None
+            st.error(f"Error stopping preview: {e}")
+    
+    # Clear preview state
     st.session_state.preview_file = None
-    st.rerun() # Update the UI immediately
+    st.session_state.preview_url = None
+    st.rerun()
 
 def start_preview(python_filename):
-    """Starts a Streamlit app preview in a separate process."""
+    """Starts a preview by copying the file to the pages directory."""
     filepath = WORKSPACE_DIR / python_filename
-    # Basic check: ensure the file exists and is a Python file
     if not filepath.is_file() or filepath.suffix != '.py':
         st.error(f"Cannot preview: '{python_filename}' is not a valid Python file.")
         return False
 
-    # Stop any currently running preview first
-    if st.session_state.get("preview_process"):
-        st.warning("Stopping existing preview first...")
-        stop_preview() # This function will rerun, so we might need to adjust flow
-        # Let's add a small delay here AFTER stop_preview (which reruns) handles its part.
-        # This might mean the button needs to be clicked twice sometimes, but simplifies state.
-        # A more complex approach would involve flags in session state.
-        time.sleep(0.5) # Brief pause
+    # Stop any existing preview
+    stop_preview()
 
-    with st.spinner(f"Starting preview for `{python_filename}`..."):
-        try:
-            port = _find_available_port()
-            # Command to run: python -m streamlit run <filepath> --port <port> [options]
-            command = [
-                sys.executable, # Use the same Python interpreter running this script
-                "-m", "streamlit", "run",
-                str(filepath.resolve()), # Use the full path to the file
-                "--server.port", str(port),
-                "--server.headless", "true", # Don't open a browser automatically
-                "--server.runOnSave", "false", # Don't automatically rerun on save
-                "--server.fileWatcherType", "none" # Don't watch for file changes
-            ]
+    try:
+        # Create preview file in pages directory with a prefix to ensure ordering
+        preview_path = PAGES_DIR / f"_preview_{python_filename}"
+        
+        # Copy the file content but add a title that shows it's a preview
+        with open(filepath, 'r') as source:
+            content = source.read()
+        
+        with open(preview_path, 'w') as dest:
+            # Add a title at the top of the file
+            preview_header = f'''import streamlit as st
 
-            # Start the command as a new process
-            preview_proc = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE, # Capture output (optional)
-                stderr=subprocess.PIPE, # Capture errors
-                text=True, encoding='utf-8'
-            )
+# Preview of {python_filename}
+st.title(f"🔍 Preview: {python_filename}")
+st.divider()
 
-            # Give Streamlit a moment to start up or fail
-            time.sleep(2.5) # Wait a bit
+# Original code below:
+'''
+            dest.write(preview_header + '\n' + content)
 
-            # Check if the process started successfully (is still running)
-            if preview_proc.poll() is None:
-                # Success! Store process info in session state
-                st.session_state.preview_process = preview_proc
-                st.session_state.preview_port = port
-                st.session_state.preview_url = f"http://localhost:{port}"
-                st.session_state.preview_file = python_filename
-                st.success(f"Preview started: {st.session_state.preview_url}")
-                st.toast(f"Preview running for {python_filename}", icon="🚀")
-                return True
-            else:
-                # Failure: Process ended quickly, likely an error
-                st.error(f"Preview failed to start for `{python_filename}`.")
-                # Try to show error output from the failed process
-                try:
-                    stderr_output = preview_proc.stderr.read()
-                    if stderr_output:
-                        st.error("Preview Error Output:")
-                        st.code(stderr_output, language=None)
-                    else: # If no stderr, maybe there was stdout?
-                         stdout_output = preview_proc.stdout.read()
-                         if stdout_output:
-                              st.error("Preview Output (may contain errors):")
-                              st.code(stdout_output, language=None)
-                except Exception as read_e:
-                    st.error(f"Could not read output from failed preview process: {read_e}")
-                # Clear any partial state
-                st.session_state.preview_process = None
-                return False
-        except Exception as e:
-            st.error(f"Error trying to start preview process: {e}")
-            st.session_state.preview_process = None # Ensure clean state
-            return False
+        # Update session state
+        st.session_state.preview_file = python_filename
+        st.session_state.preview_url = f"_preview_{python_filename}"  # Page URL will be lowercase filename
+        st.toast(f"Preview started for {python_filename}", icon="🚀")
+        return True
+
+    except Exception as e:
+        st.error(f"Error starting preview: {e}")
+        return False
 
 # --- Streamlit App UI ---
 
@@ -701,7 +643,6 @@ elif selected_tab == "Live Preview":
     st.warning("⚠️ Running AI-generated code can have unintended consequences. Review code first!")
 
     # Get preview status from session state
-    is_preview_running = st.session_state.get("preview_process") is not None
     file_being_previewed = st.session_state.get("preview_file")
     preview_url = st.session_state.get("preview_url")
     selected_file_for_preview = st.session_state.get("selected_file") # File selected in Workspace
@@ -711,10 +652,10 @@ elif selected_tab == "Live Preview":
     if not selected_file_for_preview:
         st.info("Select a file in the 'Workspace' tab to enable preview controls.")
         # Allow stopping a preview even if no file is selected
-        if is_preview_running:
+        if file_being_previewed:
             st.warning(f"Preview is running for: `{file_being_previewed}`")
             if st.button(f"⏹️ Stop Preview ({file_being_previewed})", key="stop_other_preview"):
-                stop_preview() # Will stop and rerun
+                stop_preview()
     else:
         # Controls for the file selected in the Workspace
         st.write(f"File selected for preview: `{selected_file_for_preview}`")
@@ -726,45 +667,26 @@ elif selected_tab == "Live Preview":
             # Layout Run and Stop buttons side-by-side
             run_col, stop_col = st.columns(2)
             with run_col:
-                # Disable Run button if a preview is already running
-                run_disabled = is_preview_running
+                # Disable Run button if this file is already being previewed
+                run_disabled = (file_being_previewed == selected_file_for_preview)
                 if st.button("🚀 Run Preview", disabled=run_disabled, type="primary", use_container_width=True):
                     if start_preview(selected_file_for_preview):
-                        st.rerun() # Rerun to show the preview iframe
+                        st.rerun()
             with stop_col:
-                # Disable Stop button if no preview is running OR if the running preview
-                # is for a DIFFERENT file than the one currently selected in the workspace.
-                stop_disabled = not is_preview_running or (file_being_previewed != selected_file_for_preview)
+                # Disable Stop button if no preview is running
+                stop_disabled = not file_being_previewed
                 if st.button("⏹️ Stop Preview", disabled=stop_disabled, use_container_width=True):
-                    stop_preview() # Will stop and rerun
+                    stop_preview()
 
     st.divider()
 
     # --- Preview Display ---
     st.subheader("Preview Window")
-    if is_preview_running:
+    if file_being_previewed:
         # Check if the running preview matches the file selected in the workspace
         if file_being_previewed == selected_file_for_preview:
-            st.info(f"Showing preview for `{file_being_previewed}`")
-            st.caption(f"URL: {preview_url}")
-            # Check if the process is still alive before showing iframe
-            live_process = st.session_state.preview_process
-            if live_process and live_process.poll() is None:
-                # Display the running Streamlit app in an iframe
-                st.components.v1.iframe(preview_url, height=600, scrolling=True)
-            else:
-                # The process died unexpectedly
-                st.warning(f"Preview for `{file_being_previewed}` stopped unexpectedly.")
-                # Attempt to show error output if available
-                if live_process:
-                     try:
-                         stderr = live_process.stderr.read()
-                         if stderr:
-                              with st.expander("Show error output from stopped process"): st.code(stderr)
-                     except Exception: pass # Ignore errors reading output
-                # Clear the dead process state (stop_preview handles this and reruns)
-                if live_process: # Check again in case state changed
-                     stop_preview()
+            st.success(f"Preview is running! Click the page '🔍 Preview: {file_being_previewed}' in the sidebar to view it.")
+            st.info("Tip: You can keep both the main app and preview open in separate browser tabs.")
         else:
             # A preview is running, but not for the file selected in the workspace
             st.warning(f"Preview is running for `{file_being_previewed}`. Select that file in the Workspace to see it here, or stop it using the controls above.")
