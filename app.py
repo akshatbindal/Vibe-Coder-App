@@ -82,13 +82,11 @@ def initialize_session_state():
         "messages": [],             # List to store chat messages (user and AI)
         "selected_file": None,      # Name of the file currently shown in the editor
         "file_content_on_load": "", # Content of the selected file when loaded (read-only)
-        "preview_process": None,    # Stores the running preview process object
-        "preview_port": None,       # Port number used by the preview
-        "preview_url": None,        # URL to access the preview
         "preview_file": None,       # Name of the file being previewed
         "editor_unsaved_content": "", # Current text typed into the editor
         "last_saved_content": "",   # Content that was last successfully saved to disk
     }
+    # Remove preview_process, preview_port, and preview_url as they're not needed anymore
     for key, default_value in state_defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
@@ -161,7 +159,7 @@ def delete_file(filename):
         if filepath.is_file():
             os.remove(filepath) # Delete the actual file
             # Also remove any preview of this file
-            preview_path = PAGES_DIR / f"_preview_{filename}"
+            preview_path = PAGES_DIR / f"preview_{filename.lower()}"
             if preview_path.exists():
                 preview_path.unlink()
             
@@ -358,7 +356,8 @@ def stop_preview():
     preview_file = st.session_state.get("preview_file")
     if preview_file:
         try:
-            preview_path = PAGES_DIR / f"_preview_{preview_file}"
+            # Match the naming used in start_preview
+            preview_path = PAGES_DIR / f"preview_{preview_file.lower()}"
             if preview_path.exists():
                 preview_path.unlink()
                 st.toast(f"Preview stopped for {preview_file}", icon="⏹️")
@@ -367,7 +366,7 @@ def stop_preview():
     
     # Clear preview state
     st.session_state.preview_file = None
-    st.session_state.preview_url = None
+    time.sleep(1)  # Brief pause to let the file be removed
     st.rerun()
 
 def start_preview(python_filename):
@@ -377,18 +376,22 @@ def start_preview(python_filename):
         st.error(f"Cannot preview: '{python_filename}' is not a valid Python file.")
         return False
 
+    # Ensure pages directory exists
+    PAGES_DIR.mkdir(parents=True, exist_ok=True)
+
     # Stop any existing preview
     stop_preview()
 
     try:
-        # Create preview file in pages directory with a prefix to ensure ordering
-        preview_path = PAGES_DIR / f"_preview_{python_filename}"
+        # Create preview file in pages directory - use lowercase for proper routing
+        preview_name = f"preview_{python_filename.lower()}"  # Changed prefix and made lowercase
+        preview_path = PAGES_DIR / preview_name
         
         # Copy the file content but add a title that shows it's a preview
-        with open(filepath, 'r') as source:
+        with open(filepath, 'r', encoding='utf-8') as source:
             content = source.read()
         
-        with open(preview_path, 'w') as dest:
+        with open(preview_path, 'w', encoding='utf-8') as dest:
             # Add a title at the top of the file
             preview_header = f'''import streamlit as st
 
@@ -400,10 +403,11 @@ st.divider()
 '''
             dest.write(preview_header + '\n' + content)
 
-        # Update session state
+        # Update session state - store just the filename
         st.session_state.preview_file = python_filename
-        st.session_state.preview_url = f"_preview_{python_filename}"  # Page URL will be lowercase filename
         st.toast(f"Preview started for {python_filename}", icon="🚀")
+        time.sleep(1)  # Brief pause to let the file be detected
+        st.rerun()  # Force reload to show new page
         return True
 
     except Exception as e:
@@ -644,7 +648,6 @@ elif selected_tab == "Live Preview":
 
     # Get preview status from session state
     file_being_previewed = st.session_state.get("preview_file")
-    preview_url = st.session_state.get("preview_url")
     selected_file_for_preview = st.session_state.get("selected_file") # File selected in Workspace
 
     # --- Preview Controls ---
@@ -683,13 +686,11 @@ elif selected_tab == "Live Preview":
     # --- Preview Display ---
     st.subheader("Preview Window")
     if file_being_previewed:
-        # Check if the running preview matches the file selected in the workspace
         if file_being_previewed == selected_file_for_preview:
-            st.success(f"Preview is running! Click the page '🔍 Preview: {file_being_previewed}' in the sidebar to view it.")
-            st.info("Tip: You can keep both the main app and preview open in separate browser tabs.")
+            st.success(f"Preview is running! Click the page 'Preview {file_being_previewed}' in the sidebar to view it.")
+            preview_path = f"preview_{file_being_previewed.lower()}"
+            st.info(f"Or use this direct link: [Open Preview](/{preview_path})")
         else:
-            # A preview is running, but not for the file selected in the workspace
-            st.warning(f"Preview is running for `{file_being_previewed}`. Select that file in the Workspace to see it here, or stop it using the controls above.")
+            st.warning(f"Preview is running for `{file_being_previewed}`. Select that file in the Workspace to manage it, or stop it using the controls above.")
     else:
-        # No preview is currently running
-        st.info("Click 'Run Preview' on a selected Python file to see it here.")
+        st.info("Click 'Run Preview' on a selected Python file to preview it.")
