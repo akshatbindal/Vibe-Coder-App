@@ -397,30 +397,44 @@ with st.sidebar:
 
         # --- Update Editor with Generated Code ---
                 # --- Auto-Save Generated Code ---
+                # --- Auto-Save or Auto-Create File ---
         if not ai_generated_code.startswith("# ERROR:"):
             selected_file = st.session_state.get("selected_file")
-            if selected_file:
-                # Auto-save the generated code to the currently selected file
-                st.write(f"Attempting to save generated code to '{selected_file}'...") # Add status message
-                if save_file(selected_file, ai_generated_code):
-                    st.toast(f"AI code saved to '{selected_file}'.", icon="💾")
-                    # Update editor state to reflect the save
-                    st.session_state.file_content_on_load = ai_generated_code
-                    st.session_state.editor_unsaved_content = ai_generated_code
-                    st.session_state.last_saved_content = ai_generated_code
-                    # Clear preview state as the saved content might be different now
-                    st.session_state.preview_html_content = None
-                    st.session_state.preview_error = None
-                    st.session_state.preview_requested_code = None
-                else:
-                    # save_file() already shows an error via st.error
-                    st.warning(f"AI code generated but failed to save to '{selected_file}'. Code is shown in chat.", icon="⚠️")
+            new_file_created = False
+            target_filename = selected_file
+
+            # If no file is selected, create a new one
+            if not target_filename:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                target_filename = f"handler_{timestamp}.py"
+                st.info(f"No file selected. Creating new file: '{target_filename}'")
+                new_file_created = True
+
+            # Attempt to save the code to the target file (either existing or new)
+            if save_file(target_filename, ai_generated_code):
+                st.toast(f"AI code saved to '{target_filename}'.", icon="💾")
+                # Update editor state to reflect the save
+                st.session_state.file_content_on_load = ai_generated_code
+                st.session_state.editor_unsaved_content = ai_generated_code
+                st.session_state.last_saved_content = ai_generated_code
+
+                # If a new file was created, update the selected file state
+                if new_file_created:
+                    st.session_state.selected_file = target_filename
+
+                # Clear preview state as the saved content might be different
+                st.session_state.preview_html_content = None
+                st.session_state.preview_error = None
+                st.session_state.preview_requested_code = None
+
             else:
-                # No file selected, inform the user.
-                # We are NOT automatically creating files here to avoid clutter.
-                # User must select a file first if they want auto-save.
-                st.info("AI generated code is shown below.")
-                st.warning("No file was selected in the Workspace, so the code was not automatically saved. Select an existing file (or create one manually via your OS/IDE), then ask the AI again to save the code to the selected file. Alternatively, copy/paste the code from chat into the editor and save manually.", icon="ℹ️")
+                # save_file() already shows an error via st.error
+                st.warning(f"AI code generated but failed to save to '{target_filename}'. Code is shown in chat.", icon="⚠️")
+                # If creation failed, ensure selected_file is not set to the failed name
+                if new_file_created:
+                     st.session_state.selected_file = None
+
+
         elif ai_generated_code:
             # Handle the case where AI returned an error message
              st.warning("AI generation resulted in an error. Code not saved.", icon="❌")
