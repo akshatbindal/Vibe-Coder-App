@@ -16,7 +16,7 @@ import streamlit_antd_components as sac # Using for specific buttons
 # --- Configuration ---
 st.set_page_config(
     layout="wide",
-    page_title="AI Lambda Code Generator"
+    page_title="AI Tool that generates another AI Tool" # Shorter title
 )
 
 # --- Constants ---
@@ -26,8 +26,8 @@ WORKSPACE_DIR.mkdir(exist_ok=True)
 ACE_DEFAULT_THEME = "monokai"
 ACE_DEFAULT_KEYBINDING = "vscode"
 
-# Which Google AI model to use
-GEMINI_MODEL_NAME = "gemini-1.5-flash" # Or your preferred Gemini model
+# Which Google AI model to use for generating code
+GEMINI_MODEL_NAME = "gemini-2.5-pro-exp-03-25"
 
 # Instructions for the Google AI model for generating AWS Lambda handlers
 GEMINI_SYSTEM_PROMPT = f"""
@@ -352,7 +352,7 @@ def fetch_aws_preview(code_to_preview: str, api_endpoint: str):
 
 # --- Streamlit App UI ---
 
-st.title("🤖 AI AWS Lambda Code Generator")
+st.title("🤖 AI Tool that generates another AI Tool")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -442,33 +442,34 @@ if selected_tab == "Workspace":
         st.subheader("Files")
         python_files = get_workspace_python_files()
         select_options = ["--- Select a file ---"] + python_files
-        current_selection_in_state = st.session_state.get("selected_file")
-
-        try:
-            current_index = select_options.index(current_selection_in_state) if current_selection_in_state else 0
-        except ValueError:
-            current_index = 0
-
+        current_selection = st.session_state.get("selected_file")
+        
+        # Simple selection logic
         selected_option = st.selectbox(
-            "Edit file:", options=select_options, index=current_index,
-            key="file_selector_dropdown", label_visibility="collapsed"
+            "Edit file:", 
+            options=select_options,
+            index=select_options.index(current_selection) if current_selection in select_options else 0,
+            key="file_selector"
         )
 
-        newly_selected_filename = selected_option if selected_option != "--- Select a file ---" else None
-        if newly_selected_filename != current_selection_in_state:
-            st.session_state.selected_file = newly_selected_filename
-            file_content = read_file(newly_selected_filename) if newly_selected_filename else ""
-            if file_content is None and newly_selected_filename:
-                 file_content = f"# ERROR: Could not read file '{newly_selected_filename}'"
-
-            st.session_state.file_content_on_load = file_content
-            st.session_state.editor_unsaved_content = file_content
-            st.session_state.last_saved_content = file_content
-            # Clear preview when changing files
-            st.session_state.preview_html_content = None
-            st.session_state.preview_error = None
-            st.session_state.preview_requested_code = None
-            st.rerun()
+        # Handle selection change
+        if selected_option != "--- Select a file ---":
+            if selected_option != current_selection:
+                file_content = read_file(selected_option)
+                if file_content is not None:
+                    st.session_state.selected_file = selected_option
+                    st.session_state.file_content_on_load = file_content
+                    st.session_state.editor_unsaved_content = file_content
+                    st.session_state.last_saved_content = file_content
+                    st.session_state.preview_html_content = None
+                    st.session_state.preview_error = None
+                    st.session_state.preview_requested_code = None
+        else:
+            # Clear selection
+            st.session_state.selected_file = None
+            st.session_state.file_content_on_load = ""
+            st.session_state.editor_unsaved_content = ""
+            st.session_state.last_saved_content = ""
 
     with editor_col:
         st.subheader("Code Editor")
