@@ -16,7 +16,7 @@ import streamlit_antd_components as sac # Using for specific buttons
 # --- Configuration ---
 st.set_page_config(
     layout="wide",
-    page_title="AI Tool that generates another AI Tool" # Shorter title
+    page_title="AI Lambda Code Generator"
 )
 
 # --- Constants ---
@@ -26,8 +26,8 @@ WORKSPACE_DIR.mkdir(exist_ok=True)
 ACE_DEFAULT_THEME = "monokai"
 ACE_DEFAULT_KEYBINDING = "vscode"
 
-# Which Google AI model to use for generating code
-GEMINI_MODEL_NAME = "gemini-2.5-pro-exp-03-25"
+# Which Google AI model to use
+GEMINI_MODEL_NAME = "gemini-1.5-flash" # Or your preferred Gemini model
 
 # Instructions for the Google AI model for generating AWS Lambda handlers
 GEMINI_SYSTEM_PROMPT = f"""
@@ -352,7 +352,7 @@ def fetch_aws_preview(code_to_preview: str, api_endpoint: str):
 
 # --- Streamlit App UI ---
 
-st.title("🤖 AI Tool that generates another AI Tool")
+st.title("🤖 AI AWS Lambda Code Generator")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -396,19 +396,38 @@ with st.sidebar:
         st.session_state.messages.append({"role": "assistant", "content": ai_generated_code})
 
         # --- Update Editor with Generated Code ---
+                # --- Auto-Save Generated Code ---
         if not ai_generated_code.startswith("# ERROR:"):
-            if st.session_state.selected_file:
-                 st.session_state.editor_unsaved_content = ai_generated_code
-                 # Ensure last_saved is different to enable save button
-                 if st.session_state.last_saved_content == ai_generated_code:
-                     st.session_state.last_saved_content = "" # Force save button enable
-                 st.toast(f"Code placed in editor for '{st.session_state.selected_file}'. Save manually.", icon="📝")
+            selected_file = st.session_state.get("selected_file")
+            if selected_file:
+                # Auto-save the generated code to the currently selected file
+                st.write(f"Attempting to save generated code to '{selected_file}'...") # Add status message
+                if save_file(selected_file, ai_generated_code):
+                    st.toast(f"AI code saved to '{selected_file}'.", icon="💾")
+                    # Update editor state to reflect the save
+                    st.session_state.file_content_on_load = ai_generated_code
+                    st.session_state.editor_unsaved_content = ai_generated_code
+                    st.session_state.last_saved_content = ai_generated_code
+                    # Clear preview state as the saved content might be different now
+                    st.session_state.preview_html_content = None
+                    st.session_state.preview_error = None
+                    st.session_state.preview_requested_code = None
+                else:
+                    # save_file() already shows an error via st.error
+                    st.warning(f"AI code generated but failed to save to '{selected_file}'. Code is shown in chat.", icon="⚠️")
             else:
-                 st.info("AI generated code below. Select/create a file, paste code, and save to enable preview.")
+                # No file selected, inform the user.
+                # We are NOT automatically creating files here to avoid clutter.
+                # User must select a file first if they want auto-save.
+                st.info("AI generated code is shown below.")
+                st.warning("No file was selected in the Workspace, so the code was not automatically saved. Select an existing file (or create one manually via your OS/IDE), then ask the AI again to save the code to the selected file. Alternatively, copy/paste the code from chat into the editor and save manually.", icon="ℹ️")
+        elif ai_generated_code:
+            # Handle the case where AI returned an error message
+             st.warning("AI generation resulted in an error. Code not saved.", icon="❌")
 
-        # Rerun to display the new message and potentially update editor state
+
+        # Rerun to display the new message and update file list/editor state
         st.rerun()
-
     st.divider()
 
     # --- Status Info ---
@@ -442,34 +461,33 @@ if selected_tab == "Workspace":
         st.subheader("Files")
         python_files = get_workspace_python_files()
         select_options = ["--- Select a file ---"] + python_files
-        current_selection = st.session_state.get("selected_file")
-        
-        # Simple selection logic
+        current_selection_in_state = st.session_state.get("selected_file")
+
+        try:
+            current_index = select_options.index(current_selection_in_state) if current_selection_in_state else 0
+        except ValueError:
+            current_index = 0
+
         selected_option = st.selectbox(
-            "Edit file:", 
-            options=select_options,
-            index=select_options.index(current_selection) if current_selection in select_options else 0,
-            key="file_selector"
+            "Edit file:", options=select_options, index=current_index,
+            key="file_selector_dropdown", label_visibility="collapsed"
         )
 
-        # Handle selection change
-        if selected_option != "--- Select a file ---":
-            if selected_option != current_selection:
-                file_content = read_file(selected_option)
-                if file_content is not None:
-                    st.session_state.selected_file = selected_option
-                    st.session_state.file_content_on_load = file_content
-                    st.session_state.editor_unsaved_content = file_content
-                    st.session_state.last_saved_content = file_content
-                    st.session_state.preview_html_content = None
-                    st.session_state.preview_error = None
-                    st.session_state.preview_requested_code = None
-        else:
-            # Clear selection
-            st.session_state.selected_file = None
-            st.session_state.file_content_on_load = ""
-            st.session_state.editor_unsaved_content = ""
-            st.session_state.last_saved_content = ""
+        newly_selected_filename = selected_option if selected_option != "--- Select a file ---" else None
+        if newly_selected_filename != current_selection_in_state:
+            st.session_state.selected_file = newly_selected_filename
+            file_content = read_file(newly_selected_filename) if newly_selected_filename else ""
+            if file_content is None and newly_selected_filename:
+                 file_content = f"# ERROR: Could not read file '{newly_selected_filename}'"
+
+            st.session_state.file_content_on_load = file_content
+            st.session_state.editor_unsaved_content = file_content
+            st.session_state.last_saved_content = file_content
+            # Clear preview when changing files
+            st.session_state.preview_html_content = None
+            st.session_state.preview_error = None
+            st.session_state.preview_requested_code = None
+            st.rerun()
 
     with editor_col:
         st.subheader("Code Editor")
