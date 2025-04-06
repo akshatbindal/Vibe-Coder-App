@@ -3,3 +3,4 @@ google-generativeai
 streamlit-option-menu
 streamlit-ace
 streamlit-antd-components
+requests
